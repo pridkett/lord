@@ -70,3 +70,12 @@ func TestAssets(t *testing.T) {
 		t.Error("no mlooks")
 	}
 }
+
+func TestTables(t *testing.T) {
+	if len(monsterStats) != 131 || len(trainerStats) != 12 || len(weaponStats) != 16 || len(armourStats) != 16 {
+		t.Fatal(len(monsterStats), len(trainerStats), len(weaponStats), len(armourStats))
+	}
+	if weaponStats[15].Name != "Death Sword" || weaponStats[15].Price != 400000000 || armourStats[1].Name != "Coat" {
+		t.Fatal(weaponStats[15], armourStats[1])
+	}
+}
