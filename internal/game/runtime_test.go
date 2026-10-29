@@ -1,9 +1,11 @@
 package game
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestPlayerRecordLength(t *testing.T) {
@@ -78,4 +80,34 @@ func TestTables(t *testing.T) {
 	if weaponStats[15].Name != "Death Sword" || weaponStats[15].Price != 400000000 || armourStats[1].Name != "Coat" {
 		t.Fatal(weaponStats[15], armourStats[1])
 	}
+}
+
+func TestStaleMutex(t *testing.T) {
+	dir := t.TempDir()
+	a, b := New(dir, nil), New(dir, nil)
+	name := filepath.Join(dir, "state.bin")
+
+	// A lock file left by a killed session (old, no flock) is taken over.
+	if err := os.WriteFile(name+".lock", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	_ = os.Chtimes(name+".lock", old, old)
+	start := time.Now()
+	a.fmutex(name)
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("stale lock was not taken over")
+	}
+
+	// A live holder's lock is respected, even once it is old.
+	_ = os.Chtimes(name+".lock", old, old)
+	if !mutexHeld(name) || staleMutex(name+".lock") {
+		t.Fatal("live lock reported stale")
+	}
+	a.rfmutex(name)
+	if mutexHeld(name) {
+		t.Fatal("lock not released")
+	}
+	b.fmutex(name)
+	b.rfmutex(name)
 }

@@ -502,7 +502,7 @@ func (g *Game) loadPlayer(create bool) {
 	p.OnNow = true
 	p.Put()
 	f := g.gamedir("battle" + itoa(p.Record) + ".rec.lock")
-	if fileExists(f) {
+	if mutexHeld(g.gamedir("battle" + itoa(p.Record) + ".rec")) {
 		if lines, ok := readLines(f); ok && len(lines) > 0 {
 			n, _ := jsParseInt(lines[0])
 			op := g.playerGet(n)
@@ -517,7 +517,7 @@ func (g *Game) loadPlayer(create bool) {
 					g.con.Print("\r")
 					g.con.ClearEOL()
 					g.lw("Your HP: " + prettyInt(p.HP) + "\tHis HP: " + prettyInt(op.HP))
-					if !fileExists(f) {
+					if !mutexHeld(g.gamedir("battle" + itoa(p.Record) + ".rec")) {
 						break
 					}
 				}
@@ -701,6 +701,7 @@ func (g *Game) start() {
 	g.lln(center("`0L`2egend `0O`2f The `0R`2ed `0D`2ragon"))
 	g.sln("")
 	g.getState(false)
+	g.sweepOffline()
 	g.lln(center("`2The current game has been running `0" + itoa(g.state.Days) + "`2 days."))
 	g.lln(center("`2Players are deleted after `0" + itoa(g.Settings.DeleteDays) + "`2 days of inactivity."))
 	g.showAlone()
@@ -715,6 +716,7 @@ func (g *Game) start() {
 
 	g.checkGameover()
 	g.loadPlayer(true)
+	g.holdOnline()
 	// TODO: LOCKOUT.DAT support
 
 	// js.on_exit(...): the exit handler saves the player as offline.

@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/pridkett/doorgames-common/door"
@@ -57,6 +58,8 @@ type Game struct {
 	morechk      bool
 	cleanupFiles []string
 	onExitArmed  bool
+	online       *os.File // liveness lock (see liveness.go)
+	mutexes      map[string]*os.File
 
 	// rip is always false: RIPscrip is not supported.  It's kept so the
 	// translated code reads like the original.
@@ -129,6 +132,7 @@ func (g *Game) onExit() {
 	}
 	for len(g.cleanupFiles) > 0 {
 		_ = os.Remove(g.cleanupFiles[0])
+		g.releaseMutex(g.cleanupFiles[0])
 		g.cleanupFiles = g.cleanupFiles[1:]
 	}
 	if g.con != nil {
@@ -320,6 +324,10 @@ func writeLines(p string, lines ...string) error {
 
 // fmutex is fmutex(): create fname+".lock" exclusively, retrying for 15
 // seconds.  str is the lock file's content.
+//
+// DIFF: the creating session also holds a flock on the lock file until
+// rfmutex.  Renegade SIGKILLs a door on disconnect, which leaves its lock
+// files behind; a lock file that nobody holds is stale and is removed.
 func (g *Game) fmutex(fname string, str ...string) bool {
 	end := time.Now().Add(15 * time.Second)
 	fname += ".lock"
@@ -328,14 +336,22 @@ func (g *Game) fmutex(fname string, str ...string) bool {
 		content = str[0]
 	}
 	for {
-		f, err := os.OpenFile(fname, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		f, err := os.OpenFile(fname, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 		if err == nil {
+			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 			_, _ = f.WriteString(content)
-			_ = f.Close()
+			if g.mutexes == nil {
+				g.mutexes = map[string]*os.File{}
+			}
+			g.mutexes[fname] = f
 			break
 		}
 		if !errors.Is(err, fs.ErrExist) {
 			g.fatalf("Unable to create %s please notify Sysop", fname)
+		}
+		if staleMutex(fname) {
+			_ = os.Remove(fname)
+			continue
 		}
 		if time.Now().After(end) {
 			g.fatalf("Unable to create %s please notify Sysop", fname)
@@ -352,15 +368,55 @@ func (g *Game) rfmutex(fname string) {
 	for i, f := range g.cleanupFiles {
 		if f == fname {
 			_ = os.Remove(fname)
+			g.releaseMutex(fname)
 			g.cleanupFiles = append(g.cleanupFiles[:i], g.cleanupFiles[i+1:]...)
 			return
 		}
 	}
 }
 
-// fileMutexExists reports whether a mutex file exists (file_exists on a
-// ".lock" name or a fight/battle file written by fmutex).
-func fileMutexExists(fname string) bool { return fileExists(fname + ".lock") }
+func (g *Game) releaseMutex(fname string) {
+	if f := g.mutexes[fname]; f != nil {
+		_ = f.Close()
+		delete(g.mutexes, fname)
+	}
+}
+
+// staleMutex reports whether lock file fname was left by a session that
+// is gone: it is over a second old and nobody holds its flock.
+func staleMutex(fname string) bool {
+	st, err := os.Stat(fname)
+	if err != nil || time.Since(st.ModTime()) < time.Second {
+		return false
+	}
+	f, err := os.Open(fname)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB) != nil {
+		return false
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return true
+}
+
+// mutexHeld reports whether fmutex's lock for fname (fname+".lock") is
+// held by a live session, removing a stale one.
+func mutexHeld(fname string) bool {
+	fname += ".lock"
+	if !fileExists(fname) {
+		return false
+	}
+	if staleMutex(fname) {
+		_ = os.Remove(fname)
+		return false
+	}
+	return true
+}
+
+// fileMutexExists is mutexHeld (file_exists on a name fmutex created).
+func fileMutexExists(fname string) bool { return mutexHeld(fname) }
 
 // ---- state --------------------------------------------------------------
 
