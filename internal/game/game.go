@@ -20,6 +20,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -111,11 +112,7 @@ func (g *Game) Run() (code int, err error) {
 			code = ex.code
 		} else {
 			code = 1
-			if e, ok := r.(error); ok {
-				err = e
-			} else {
-				err = fmt.Errorf("%v", r)
-			}
+			err = fmt.Errorf("%v\n%s", r, debug.Stack())
 		}
 		g.onExit()
 	}()
