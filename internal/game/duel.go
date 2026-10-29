@@ -215,13 +215,15 @@ func (g *Game) onBattle(op *Player, first bool, action string) string {
 	} else {
 		g.lln("  `%** YOUR ENEMY STRIKES YOU FIRST **")
 		if action == "" {
-			// BUG (lord.js): `if (wait_for_hit(op) === 'ABORT');` has a
-			// stray semicolon, so the duel always ends for this side after
-			// the first strike.  Kept.
-			waitForHit(op)
-			return ""
+			// DIFF: lord.js has `if (wait_for_hit(op) === 'ABORT');` with a
+			// stray semicolon, so this side always left the duel after the
+			// first strike; it now leaves only on ABORT.
+			if waitForHit(op) == "ABORT" {
+				return ""
+			}
+		} else {
+			onStruck(op, action)
 		}
-		onStruck(op, action)
 	}
 
 	cantaunt = true
